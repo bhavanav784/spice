@@ -1,0 +1,346 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>Sunrise Hotel — Menu & Orders</title>
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+<style>
+  :root{ --accent1:#d14326; --accent2:#ff7a3a; --muted:#6b7280 }
+  body{background:linear-gradient(180deg,#fff7f5,#fff);font-family:Inter,Arial;margin:0;padding:14px}
+  .brand{display:flex;justify-content:space-between;align-items:center}
+  .menu-card{background:#fff;border-radius:12px;padding:12px;box-shadow:0 8px 20px rgba(0,0,0,0.06)}
+  .img-thumb{height:140px;object-fit:cover;border-radius:8px;width:100%}
+  .btn-accent{background:linear-gradient(90deg,var(--accent1),var(--accent2));color:#fff;border:0}
+  .small-muted{color:var(--muted);font-size:13px}
+  .sidebar{position:sticky;top:16px}
+  .badge-muted{background:#f3f4f6;color:#374151;padding:4px 8px;border-radius:999px}
+</style>
+</head>
+<body>
+  <div class="container">
+    <div class="brand mb-3">
+      <div><h3 class="mb-0">Spice</h3><div class="small-muted">Contactless ordering</div></div>
+      <div class="small-muted">Table: <strong id="tableId">Walk-in</strong></div>
+    </div>
+
+    <div class="row g-3">
+      <div class="col-lg-8">
+        <div id="menuGrid" class="row g-3">Loading menu…</div>
+      </div>
+
+      <div class="col-lg-4">
+        <div class="menu-card mb-3 sidebar">
+          <h5>Your Order</h5>
+          <div id="cartList" style="min-height:90px">No items</div>
+          <div class="d-flex justify-content-between align-items-center mt-2">
+            <div class="small-muted">Total</div><div><strong>₹<span id="cartTotal">0</span></strong></div>
+          </div>
+          <div class="mt-3 d-grid gap-2">
+            <button id="placeOrderBtn" class="btn btn-accent">Place Order</button>
+            <button id="payBtn" class="btn btn-outline-secondary">Mock Pay (mark last paid)</button>
+            <button id="clearCartBtn" class="btn btn-light">Clear Cart</button>
+          </div>
+          <hr/>
+          <h6>Owner / Cook Login</h6>
+          <input id="loginEmail" class="form-control mb-2" placeholder="email">
+          <input id="loginPass" type="password" class="form-control mb-2" placeholder="password">
+          <div class="d-grid gap-2">
+            <button id="loginBtn" class="btn btn-accent">Login</button>
+            <button id="logoutBtn" class="btn btn-light">Logout</button>
+          </div>
+          <div id="adminArea" style="display:none;margin-top:12px">
+            <h6>Live Orders</h6>
+            <div id="ordersList" style="max-height:360px;overflow:auto"></div>
+          </div>
+          <!--<div class="small-muted mt-2">Demo owner: <code>owner@hotel.com</code>/<code>owner123</code><br/>cook: <code>cook@hotel.com</code>/<code>cook123</code></div>-->
+        </div>
+      </div>
+    </div>
+  </div>
+
+<script>
+/* ---------- Config ---------- */
+const API_BASE = '/api';
+const POLL_INTERVAL = 2000; // ms
+
+/* ---------- UI refs ---------- */
+const menuGrid = document.getElementById('menuGrid');
+const cartList = document.getElementById('cartList');
+const cartTotalEl = document.getElementById('cartTotal');
+const placeOrderBtn = document.getElementById('placeOrderBtn');
+const payBtn = document.getElementById('payBtn');
+const clearCartBtn = document.getElementById('clearCartBtn');
+
+const loginEmail = document.getElementById('loginEmail');
+const loginPass  = document.getElementById('loginPass');
+const loginBtn   = document.getElementById('loginBtn');
+const logoutBtn  = document.getElementById('logoutBtn');
+const adminArea  = document.getElementById('adminArea');
+const ordersList = document.getElementById('ordersList');
+
+const urlParams = new URLSearchParams(window.location.search);
+const tableParam = urlParams.get('table') || 'Walk-in';
+document.getElementById('tableId').textContent = tableParam;
+
+/* ---------- State ---------- */
+let CART = [];
+let USER = null;   // { role: 'owner'|'cook' }
+let pollTimer = null;
+let lastOrderIds = new Set();
+let audioCtx = null;
+
+/* ---------- Helpers ---------- */
+function toast(msg){ alert(msg); }
+function playBeep(){
+  if(!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = 'sine'; o.frequency.value = 880; g.gain.value = 0.04;
+  o.connect(g); g.connect(audioCtx.destination); o.start(); setTimeout(()=>o.stop(), 160);
+}
+async function requestNotificationPermission(){
+  if(!("Notification" in window)) return false;
+  if(Notification.permission === 'granted') return true;
+  if(Notification.permission !== 'denied') {
+    const p = await Notification.requestPermission();
+    return p === 'granted';
+  }
+  return false;
+}
+
+/* ---------- image helper (local images) ---------- */
+const placeholderBase64 = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAMgAAADICAMAAACahl6sAAAAM1BMVEVHcEz//////////////////////////////////////////////////////////////////+3poBQAAAAEHRSTlMABlSl1ZpUKoZX6mE6oPD58AAACVklEQVR4Ae3WAQkAAAzDMPunhQ8xZUEAAAAAAAAAAAAAAAAAAAAAAADgHn16yvhJHg+fjHT9rLqu7Yv7PXn19qfV9P2N/ndV8b+tR9fzJdX3LW7VbV9Z9a+3N1fV9V/XsB6t6XtP2+F7R9lVXX/3n1K6n7L9P2Jdd3dpv6X79f/7c53V9V/27jS67b1lX9f3W4H8+P1vAAAAAElFTkSuQmCC";
+
+function imgForItemName(name){
+  // transform: lowercase, spaces to underscores, keep only [a-z0-9_]
+  const file = name.toLowerCase().replace(/[^\w\s]/g, '').trim().replace(/\s+/g, '_') + '.jpg';
+  return `/images/${file}`;
+}
+
+/* ---------- MENU (from server which reads Firestore) ---------- */
+async function loadMenu(){
+  try{
+    menuGrid.innerHTML = '<div class="col-12">Loading menu…</div>';
+    const res = await fetch(API_BASE + '/menu');
+    if(!res.ok) throw new Error('menu fetch failed');
+    const menu = await res.json();
+    if(!menu || menu.length === 0){ menuGrid.innerHTML = '<div class="col-12">No menu items</div>'; return; }
+    menuGrid.innerHTML = '';
+    menu.forEach(item => {
+      const col = document.createElement('div'); col.className = 'col-md-6 col-lg-4';
+      // choose local image path (based on name) and fallback to placeholderBase64
+      const imgPath = imgForItemName(item.name);
+      col.innerHTML = `
+        <div class="menu-card h-100 d-flex flex-column">
+          <img src="${imgPath}" onerror="this.src='${placeholderBase64}'" class="img-thumb mb-2" alt="${item.name}">
+          <div><strong>${item.name}</strong></div>
+          <div class="small-muted">${item.category || ''}</div>
+          <p class="small-muted mb-2">${item.description || ''}</p>
+          <div class="mt-auto d-flex justify-content-between align-items-center">
+            <div><strong>₹${item.price}</strong></div>
+            <button class="btn btn-sm btn-accent">Add</button>
+          </div>
+        </div>
+      `;
+      col.querySelector('button').addEventListener('click', ()=> addToCart({ id: item.id, name: item.name, price: item.price }));
+      menuGrid.appendChild(col);
+    });
+  }catch(err){
+    console.error(err);
+    menuGrid.innerHTML = '<div class="col-12 text-danger">Failed to load menu. Server error.</div>';
+  }
+}
+loadMenu();
+
+/* ---------- CART ---------- */
+function addToCart(item){
+  const f = CART.find(c => c.id === item.id);
+  if(f) f.qty++;
+  else CART.push({ ...item, qty: 1 });
+  renderCart();
+}
+function renderCart(){
+  cartList.innerHTML = '';
+  if(CART.length === 0){ cartList.textContent = 'No items'; cartTotalEl.textContent = '0'; return; }
+  let total = 0;
+  CART.forEach(ci => {
+    total += ci.price * ci.qty;
+    const r = document.createElement('div'); r.className = 'd-flex justify-content-between align-items-center mb-1';
+    r.innerHTML = `<div>${ci.name} × ${ci.qty}</div><div>₹${ci.price * ci.qty}</div>`;
+    cartList.appendChild(r);
+  });
+  cartTotalEl.textContent = total;
+}
+clearCartBtn.addEventListener('click', ()=> { CART = []; renderCart(); });
+
+/* ---------- PLACE ORDER ---------- */
+placeOrderBtn.addEventListener('click', async ()=>{
+  if(CART.length === 0) return toast('Cart empty');
+  const total = CART.reduce((s,c)=> s + c.price*c.qty, 0);
+  const customer = prompt('Enter name or table number (optional):', '') || 'Guest';
+  const payload = { items: CART, table: tableParam, total, customer };
+  try {
+    const res = await fetch(API_BASE + '/orders', { method: 'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify(payload) });
+    const data = await res.json();
+    if(data && data.id){
+      toast('Order placed. ID: ' + data.id);
+      CART = []; renderCart();
+      localStorage.setItem('lastOrderId', data.id);
+    } else throw new Error('no-id');
+  } catch (err){
+    console.error(err);
+    toast('Failed to place order');
+  }
+});
+
+/* Mock pay: mark last local order as paid */
+payBtn.addEventListener('click', async ()=>{
+  const last = localStorage.getItem('lastOrderId');
+  if(!last) return toast('No recent order to pay');
+  try{
+    await fetch(API_BASE + '/orders/' + last, { method:'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ paid: true }) });
+    toast('Marked paid (mock)');
+  }catch(e){ console.error(e); toast('Failed to mark paid'); }
+});
+
+/* ---------- LOGIN (demo via server) ---------- */
+loginBtn.addEventListener('click', async ()=>{
+  const email = loginEmail.value.trim(), pass = loginPass.value.trim();
+  if(!email || !pass) return toast('Enter credentials');
+  try{
+    const res = await fetch(API_BASE + '/login', { method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({ email, password: pass }) });
+    const data = await res.json();
+    if(!data.success) return toast('Login failed');
+    USER = { role: data.role, email };
+    loginEmail.value = ''; loginPass.value = '';
+    adminArea.style.display = 'block';
+    await requestNotificationPermission();
+    startOrdersPoll();
+    toast('Logged in as ' + USER.role);
+  }catch(e){ console.error(e); toast('Login error'); }
+});
+
+logoutBtn.addEventListener('click', ()=>{
+  USER = null;
+  adminArea.style.display = 'none';
+  stopOrdersPoll();
+  toast('Logged out');
+});
+
+/* ---------- ORDERS POLLING + NOTIFICATIONS ---------- */
+let pollHandle = null;
+async function fetchOrders(){
+  const res = await fetch(API_BASE + '/orders');
+  if(!res.ok) throw new Error('orders fetch failed');
+  return await res.json();
+}
+
+async function pollOnce(){
+  try{
+    const orders = await fetchOrders();
+    // detect new orders for notifications (only for owner/cook)
+    if(USER && (USER.role === 'owner' || USER.role === 'cook')){
+      const ids = orders.map(o=>o.id);
+      const newIds = ids.filter(id => !lastOrderIds.has(id));
+      if(newIds.length > 0){
+        playBeep();
+        // browser notification
+        if(Notification.permission === 'granted'){
+          const newest = orders[0];
+          const body = (newest.items || []).map(i=> `${i.name}×${i.qty}`).join(', ');
+          new Notification('New Order', { body: body || 'New order placed' });
+        }
+      }
+      lastOrderIds = new Set(ids);
+    }
+    renderOrdersForRole(orders);
+  }catch(err){
+    console.error('pollOnce err', err);
+  }
+}
+
+function startOrdersPoll(){
+  if(pollHandle) return;
+  pollOnce();
+  pollHandle = setInterval(pollOnce, POLL_INTERVAL);
+}
+function stopOrdersPoll(){ if(pollHandle){ clearInterval(pollHandle); pollHandle = null; lastOrderIds.clear(); ordersList.innerHTML = ''; } }
+
+/* render orders depending on role */
+function renderOrdersForRole(allOrders){
+  if(!USER) return;
+  const role = USER.role;
+  // show active orders only (hide prepared)
+  const visible = allOrders.filter(o => (o.status !== 'prepared' && o.status !== 'delivered' && o.status !== 'completed'));
+  ordersList.innerHTML = '';
+  visible.forEach(o => {
+    // owner sees pending & cooking & confirmed, cook sees confirmed & cooking
+    let show = false;
+    if(role === 'owner' && (o.status === 'pending' || o.status === 'cooking' || o.status === 'confirmed')) show = true;
+    if(role === 'cook' && (o.status === 'confirmed' || o.status === 'cooking')) show = true;
+    if(!show) return;
+
+    const container = document.createElement('div');
+    container.className = 'mb-2 p-2 border rounded';
+    container.innerHTML = `<div><strong>Order ${o.id}</strong> • ₹${o.total || 0}</div>
+      <div class="small-muted">${o.table || ''} • ${o.customer || ''}</div>
+      <div style="margin-top:8px">${(o.items||[]).map(i=>`<div>${i.name} × ${i.qty}</div>`).join('')}</div>
+      <div class="mt-2"><span class="badge-muted">Status: ${o.status || 'pending'}</span> <span class="badge-muted ms-2">${o.paid ? 'Paid' : 'Unpaid'}</span></div>`;
+
+    const actions = document.createElement('div'); actions.className = 'mt-2 d-flex gap-2';
+    // owner actions
+    if(role === 'owner' && o.status === 'pending'){
+      const b = document.createElement('button'); b.className = 'btn btn-sm btn-primary'; b.textContent = 'Confirm (to cook)';
+      b.onclick = ()=> updateOrderStatus(o.id, { status: 'confirmed' });
+      actions.appendChild(b);
+    }
+    if(role === 'owner' && o.status === 'cooking'){
+      const b = document.createElement('button'); b.className = 'btn btn-sm btn-success'; b.textContent = 'Mark Delivered';
+      b.onclick = ()=> updateOrderStatus(o.id, { status: 'delivered' });
+      actions.appendChild(b);
+    }
+    if(role === 'owner' && !o.paid){
+      const p = document.createElement('button'); p.className='btn btn-sm btn-outline-secondary'; p.textContent='Mark Paid';
+      p.onclick = ()=> updateOrderStatus(o.id, { paid: true });
+      actions.appendChild(p);
+    }
+    // cook actions
+    if(role === 'cook' && o.status === 'confirmed'){
+      const b = document.createElement('button'); b.className='btn btn-sm btn-warning'; b.textContent='Start Cooking';
+      b.onclick = ()=> updateOrderStatus(o.id, { status: 'cooking' });
+      actions.appendChild(b);
+    }
+    if(role === 'cook' && o.status === 'cooking'){
+      const b = document.createElement('button'); b.className='btn btn-sm btn-success'; b.textContent='Mark Ready';
+      b.onclick = ()=> updateOrderStatus(o.id, { status: 'prepared' });
+      actions.appendChild(b);
+    }
+
+    container.appendChild(actions);
+    ordersList.appendChild(container);
+  });
+}
+
+/* update order via API (PATCH) */
+async function updateOrderStatus(id, patch){
+  try{
+    const res = await fetch(API_BASE + '/orders/' + id, { method: 'PATCH', headers:{'Content-Type':'application/json'}, body: JSON.stringify(patch) });
+    if(!res.ok) throw new Error('update failed');
+    await pollOnce(); // refresh immediately
+  }catch(e){ console.error(e); toast('Failed to update order'); }
+}
+
+/* ---------- init: restore last order id UI (no login required) ---------- */
+(function init(){
+  renderCart();
+  const last = localStorage.getItem('lastOrderId');
+  if(last) {
+    // small tracker UI: can be implemented — quick alert
+    // but keep simple for now
+    console.log('lastOrderId', last);
+  }
+})();
+</script>
+</body>
+</html>

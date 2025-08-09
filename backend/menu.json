@@ -1,0 +1,77 @@
+[
+  {
+    "name": "Margherita Pizza",
+    "price": 250,
+    "category": "Pizza"
+  },
+  {
+    "name": "Farmhouse Pizza",
+    "price": 320,
+    "category": "Pizza"
+  },
+  {
+    "name": "Chicken Tikka Pizza",
+    "price": 370,
+    "category": "Pizza"
+  },
+  {
+    "name": "Paneer Butter Masala",
+    "price": 280,
+    "category": "Indian"
+  },
+  {
+    "name": "Butter Naan",
+    "price": 40,
+    "category": "Indian"
+  },
+  {
+    "name": "Masala Dosa",
+    "price": 90,
+    "category": "South Indian"
+  },
+  {
+    "name": "Idli Sambar",
+    "price": 60,
+    "category": "South Indian"
+  },
+  {
+    "name": "Chole Bhature",
+    "price": 100,
+    "category": "North Indian"
+  },
+  {
+    "name": "Fried Rice",
+    "price": 120,
+    "category": "Chinese"
+  },
+  {
+    "name": "Veg Manchurian",
+    "price": 140,
+    "category": "Chinese"
+  },
+  {
+    "name": "Chicken Hakka Noodles",
+    "price": 160,
+    "category": "Chinese"
+  },
+  {
+    "name": "Gulab Jamun",
+    "price": 50,
+    "category": "Desserts"
+  },
+  {
+    "name": "Brownie with Ice Cream",
+    "price": 120,
+    "category": "Desserts"
+  },
+  {
+    "name": "Cold Coffee",
+    "price": 80,
+    "category": "Beverages"
+  },
+  {
+    "name": "Lassi",
+    "price": 60,
+    "category": "Beverages"
+  }
+]
