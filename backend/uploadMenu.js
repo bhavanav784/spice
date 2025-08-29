@@ -1,31 +1,26 @@
-const admin = require("firebase-admin");
 const fs = require("fs");
 const path = require("path");
 
-// Load service account key (downloaded from Firebase Console)
-const serviceAccount = require("./serviceAccountKey.json");
-
-// Initialize Firebase Admin
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-
-const db = admin.firestore();
-
 // Read menu JSON file
-const menuData = JSON.parse(fs.readFileSync(path.join(__dirname, "menu.json"), "utf8"));
+const menuPath = path.join(__dirname, "menu.json");
 
-async function uploadMenu() {
-  const batch = db.batch();
-  const menuCollection = db.collection("menu");
-
-  menuData.forEach(item => {
-    const docRef = menuCollection.doc(); // Auto ID
-    batch.set(docRef, item);
-  });
-
-  await batch.commit();
-  console.log(" Menu uploaded successfully!");
+if (!fs.existsSync(menuPath)) {
+  console.error("menu.json not found!");
+  process.exit(1);
 }
 
-uploadMenu().catch(console.error);
+const menuData = JSON.parse(fs.readFileSync(menuPath, "utf8"));
+
+// "Upload" menu — in this case, we just print it or save it to another file
+function uploadMenu() {
+  console.log("Menu items:");
+  menuData.forEach((item, index) => {
+    console.log(`${index + 1}. ${item.name} - ₹${item.price}`);
+  });
+
+  // Optional: Save a copy to a local file (in-memory persistence)
+  fs.writeFileSync(path.join(__dirname, "menu_storage.json"), JSON.stringify(menuData, null, 2));
+  console.log("\nMenu saved to menu_storage.json");
+}
+
+uploadMenu();

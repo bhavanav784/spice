@@ -1,30 +1,15 @@
-// server.js
 const express = require('express');
 const path = require('path');
-const admin = require('firebase-admin');
 const fs = require('fs');
-
-const SERVICE_KEY_PATH = path.join(__dirname, 'serviceAccountKey.json');
-if (!fs.existsSync(SERVICE_KEY_PATH)) {
-  console.error('Missing serviceAccountKey.json — download from Firebase console and place it here.');
-  process.exit(1);
-}
-
-const serviceAccount = require(SERVICE_KEY_PATH);
-
-admin.initializeApp({
-  credential: admin.credential.cert(serviceAccount)
-});
-const db = admin.firestore();
 
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, 'public')));
 
-// ---- Demo hardcoded accounts (no Firebase Auth needed) ----
+// ---- Demo hardcoded accounts ----
 const DEMO = {
   owner: { email: 'owner@hotel.com', password: 'owner123', role: 'owner' },
-  cook:  { email: 'cook@hotel.com',  password: 'cook123', role: 'cook' }
+  cook: { email: 'cook@hotel.com', password: 'cook123', role: 'cook' }
 };
 
 // ---- Login (demo) ----
@@ -36,61 +21,53 @@ app.post('/api/login', (req, res) => {
   return res.json({ success: false, message: 'Invalid credentials' });
 });
 
-// ---- Menu: read from Firestore (collection 'menu') ----
-app.get('/api/menu', async (req, res) => {
-  try {
-    const snap = await db.collection('menu').orderBy('name').get();
-    const items = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    res.json(items);
-  } catch (err) {
-    console.error('GET /api/menu', err);
-    res.status(500).json({ error: 'Failed to fetch menu' });
-  }
+// ---- Menu: read from menu.json ----
+const menuPath = path.join(__dirname, 'menu.json');
+let menuItems = [];
+
+if (fs.existsSync(menuPath)) {
+  menuItems = JSON.parse(fs.readFileSync(menuPath, 'utf8'));
+} else {
+  console.error("menu.json not found! Make sure it's in the backend folder.");
+}
+
+app.get('/api/menu', (req, res) => {
+  res.json(menuItems);
 });
 
-// ---- Orders: create, list, patch ----
-app.post('/api/orders', async (req, res) => {
-  try {
-    const { items = [], table = 'Walk-in', total = 0, customer = 'Guest' } = req.body;
-    const order = {
-      items,
-      table,
-      total,
-      customer,
-      status: 'pending', // pending -> confirmed -> cooking -> prepared -> delivered
-      paid: false,
-      createdAt: admin.firestore.FieldValue.serverTimestamp()
-    };
-    const ref = await db.collection('orders').add(order);
-    res.json({ success: true, id: ref.id });
-  } catch (err) {
-    console.error('POST /api/orders', err);
-    res.status(500).json({ error: 'Failed to create order' });
-  }
+// ---- Orders: in-memory storage ----
+let orders = [];
+
+app.post('/api/orders', (req, res) => {
+  const { items = [], table = 'Walk-in', total = 0, customer = 'Guest' } = req.body;
+  const order = {
+    id: orders.length + 1,
+    items,
+    table,
+    total,
+    customer,
+    status: 'pending', // pending -> confirmed -> cooking -> prepared -> delivered
+    paid: false,
+    createdAt: new Date().toISOString()
+  };
+  orders.push(order);
+  res.json({ success: true, id: order.id });
 });
 
-app.get('/api/orders', async (req, res) => {
-  try {
-    const snap = await db.collection('orders').orderBy('createdAt','desc').limit(500).get();
-    const orders = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-    res.json(orders);
-  } catch (err) {
-    console.error('GET /api/orders', err);
-    res.status(500).json({ error: 'Failed to fetch orders' });
-  }
+app.get('/api/orders', (req, res) => {
+  // latest orders first
+  res.json(orders.slice().reverse());
 });
 
-app.patch('/api/orders/:id', async (req, res) => {
-  try {
-    const id = req.params.id;
-    const patch = req.body || {};
-    patch.updatedAt = admin.firestore.FieldValue.serverTimestamp();
-    await db.collection('orders').doc(id).update(patch);
-    res.json({ success: true });
-  } catch (err) {
-    console.error('PATCH /api/orders/:id', err);
-    res.status(500).json({ error: 'Failed to update order' });
-  }
+app.patch('/api/orders/:id', (req, res) => {
+  const id = parseInt(req.params.id);
+  const patch = req.body || {};
+  const order = orders.find(o => o.id === id);
+  if (!order) return res.status(404).json({ error: 'Order not found' });
+
+  Object.assign(order, patch);
+  order.updatedAt = new Date().toISOString();
+  res.json({ success: true });
 });
 
 // SPA fallback
@@ -98,6 +75,6 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
 
-// Start
-const PORT = process.env.PORT || 5000;
+// Start server
+const PORT = process.env.PORT || 5001;
 app.listen(PORT, () => console.log(`Server running on http://localhost:${PORT}`));
